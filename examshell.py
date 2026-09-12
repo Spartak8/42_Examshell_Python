@@ -2672,6 +2672,8 @@ class ExamShell:
         print()
         print(f"  {C.DIM}------------------------------------------------------------{C.RST}")
         print(f"  Type {C.B}'grademe'{C.RST} to submit your solution when ready.")
+        if self.practice_mode:
+            print(f"  Type {C.B}'menu'{C.RST} to go back and choose another exercise.")
         print()
 
     def cmd_subject(self):
