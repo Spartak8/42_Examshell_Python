@@ -1,0 +1,9 @@
+# Exam workspace directories (auto-generated)
+rendu/
+subject/
+traces/
+__pycache__/
+*.pyc
+
+# Local regression tests (not included in the public repository)
+tests/

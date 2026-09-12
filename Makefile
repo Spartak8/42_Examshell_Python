@@ -1,4 +1,4 @@
-.PHONY: help run practice real exam03 exam04 test
+.PHONY: help run practice real exam03 exam04
 
 help:
 	@echo "Available commands:"
@@ -7,7 +7,6 @@ help:
 	@echo "  make real      Choose an exam and start Real Exam mode"
 	@echo "  make exam03    Open Exam 03 and choose a mode"
 	@echo "  make exam04    Open Exam 04 and choose a mode"
-	@echo "  make test      Run the Exam Shell regression tests"
 
 run:
 	python3 examshell.py
@@ -23,6 +22,3 @@ exam03:
 
 exam04:
 	python3 examshell.py --exam 4
-
-test:
-	python3 -m unittest discover -s tests -v

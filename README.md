@@ -132,31 +132,11 @@ After each valid grading attempt, a detailed report is saved under `traces/`. Fa
 
 ```text
 exam1/
-├── examshell.py              Main application, subjects, and exercise cases
-├── exam_worker.py            Internal isolated submission runner
-├── Makefile                  Short commands for running and testing
-├── README.md                 Usage guide
-└── tests/
-    └── test_examshell.py     Regression tests for Exam Shell itself
+├── examshell.py     Main application, subjects, and exercise cases
+├── exam_worker.py   Internal isolated submission runner
+├── Makefile         Short commands for running
+└── README.md        Usage guide
 ```
-
-The tests in `tests/` verify the Exam Shell application. They are separate from the exercise cases used when a student enters `grademe`.
-
-## Running project tests
-
-After changing Exam Shell, run:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Or use the Makefile target, which runs the same suite with `python3`:
-
-```bash
-make test
-```
-
-The regression suite checks configuration completeness, all exercise reference implementations, strict result types, timers, practice attempts, forbidden functions, exceptions, printed output, and infinite-loop termination.
 
 ## Common problems
 
