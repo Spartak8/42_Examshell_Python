@@ -1,57 +1,48 @@
 # Exam Shell
 
-Exam Shell is a terminal-based simulator for practicing 42-style Python exams. It includes Exam 03 and Exam 04, timed real-exam sessions, unrestricted practice sessions, automatic grading, test traces, and exercise subjects.
+Exam Shell is a terminal simulator for 42-style programming exams. It includes Exam Rank 02 in C plus Exam 03 and Exam 04 in Python, with timed real-exam sessions, unrestricted practice, automatic grading, traces, and local subjects.
 
 ## Requirements
 
 - Python 3.10 or newer
-- A terminal that supports ANSI colors
-- No external Python packages are required
-- `make` is optional and only needed for the Makefile shortcuts
+- A terminal with ANSI-color support
+- For Exam 02: `cc` on `PATH` (GCC or Clang with C99 support), plus `nm`
+  or `llvm-nm` from the same toolchain for allowed-function checks
+- No external Python packages
+- `make` is optional and is used only for shortcuts
 
-Keep `examshell.py` and `exam_worker.py` together in the same directory. `exam_worker.py` is used internally to run submitted solutions safely and should not be started manually.
+Keep `examshell.py`, `exam_worker.py`, `worker_protocol.py`, `exam02_catalog.py`, `exam02_subjects.py`, and `c_grader.py` together. Exam 02 subject text is embedded in the project; the original downloaded exercise archive is not required.
 
 ## Starting Exam Shell
 
-Open a terminal in the project directory and run:
-
 ```bash
-python3 examshell.py
+python examshell.py
 ```
 
-If your system provides `make` and `python3`, you can start it with:
+The interactive setup asks for an exam, then Real Exam or Practice mode. Practice mode also lets you choose a level and exercise immediately.
 
-```bash
-make run
-```
-
-The interactive setup will ask you to choose:
-
-1. Exam 03 or Exam 04
-2. Real Exam or Practice mode
-3. A level and exercise when using Practice mode
-
-You can also skip parts of the menus with command-line options:
+Command-line examples:
 
 ```bash
 python examshell.py --practice
 python examshell.py --real
-python examshell.py --exam 3
-python examshell.py --exam 4
+python examshell.py --exam 2
 python examshell.py --exam 3 --practice
 python examshell.py --exam 4 --real
 ```
 
-Equivalent Makefile shortcuts are available:
+Equivalent shortcuts:
 
 ```bash
+make run
 make practice
 make real
+make exam02
 make exam03
 make exam04
 ```
 
-Run `make help` to display all available targets. All Makefile targets use the `python3` command.
+Run `make help` to list every target.
 
 ## Modes
 
@@ -59,103 +50,107 @@ Run `make help` to display all available targets. All Makefile targets use the `
 
 - Runs for three hours.
 - Assigns one random exercise from Level 1.
-- Passing an exercise advances you to the next level.
-- Passing every level completes the exam with 100 points.
-- The timer continues while Exam Shell waits for commands and level confirmation.
+- Passing advances to the next level.
+- Completing every level earns 100 points.
+- Exam 02 has four 25-point levels; its pool contains 57 C exercises.
 
 ### Practice
 
 - Has no timer or score.
 - Lets you choose any level and exercise.
-- Use the `menu` command to switch exercises at any time.
-- After passing an exercise, you can immediately select another one.
+- Use `menu` to switch exercises at any time.
 
 ## Exercise files
 
-When an exercise is assigned, Exam Shell creates its subject at:
+Each assigned subject is written to:
 
 ```text
 subject/<exercise>/<exercise>.txt
 ```
 
-Create your solution using this exact structure:
+Submit using the exact language-specific filename:
 
 ```text
+# Exam 02 (C)
+rendu/<exercise>/<exercise>.c
+
+# Exam 03 or 04 (Python)
 rendu/<exercise>/<exercise>.py
 ```
 
-For example, for `py_inter`:
+Examples:
 
 ```text
+subject/ft_strlen/ft_strlen.txt
+rendu/ft_strlen/ft_strlen.c
+
 subject/py_inter/py_inter.txt
 rendu/py_inter/py_inter.py
 ```
 
-The function name inside the solution must exactly match the function shown in the subject.
+Some C assignments require a header as stated in their subject. Grader-provided headers such as `list.h` are placed with the subject when the assignment is selected.
 
-> **Important:** `subject/`, `rendu/`, and `traces/` are temporary session directories. Exam Shell removes them when the session finishes. Copy any solution you want to keep somewhere else before exiting.
+> **Important:** `subject/`, `rendu/`, and `traces/` are temporary session directories. They are removed when the session finishes, so copy solutions you want to keep before exiting.
 
 ## Commands
 
 | Command | Description |
 | --- | --- |
-| `grademe` | Run all tests for the current solution. `grade` is also accepted. |
-| `subject` | Display the current subject in the terminal. |
+| `grademe` | Compile/run all tests for the current solution (`grade` also works). |
+| `subject` | Display the current subject. |
 | `trace` | Display the latest grading trace. |
-| `trace N` | Display trace attempt number `N` for the current exercise. |
+| `trace N` | Display attempt `N` for the current exercise. |
 | `status` | Show the current exercise, score or solved count, and attempts. |
-| `time` | Show the remaining time, or confirm that Practice has no limit. |
+| `time` | Show remaining time or confirm that Practice has no limit. |
 | `menu` | Choose another exercise in Practice mode. |
 | `clear` | Clear the terminal and redraw the session banner. |
-| `help` | Show the available commands. |
+| `help` | Show available commands. |
 | `exit` | Finish the current session after confirmation. |
 
 ## Grading
 
-Type `grademe` after creating your solution file. Exam Shell checks:
+Python submissions are syntax-checked and executed through `exam_worker.py` in a separate process. Worker messages use a bounded, schema-validated protocol, results are type-strict, and exercise-specific restrictions such as the Cryptic Sorter sorting prohibition are enforced.
 
-- The expected file exists.
-- The source contains valid Python syntax.
-- The required function is declared with normal `def`.
-- Exercise-specific forbidden functions are not used.
-- The function completes within the grading safety timeout.
-- The returned value and its type match the expected result.
-- Every configured test case passes.
+C submissions are compiled with strict warnings using C99, `-Wall`, `-Wextra`, and `-Werror`. Standalone programs are checked by exact output and exit status. Function exercises are linked to generated test harnesses that check return values, mutations, allocation results, lists, and grids as appropriate. Each native test runs in a separate process with a timeout, so ordinary crashes and infinite loops are reported without terminating Exam Shell.
 
-Student code runs through `exam_worker.py` in a separate process. An exception, infinite loop, `exit()`, or unwanted `print()` output from a solution will not freeze or corrupt the main Exam Shell.
+Expected C results are defined independently by the simulator and never loaded from example solutions.
 
-Cryptic Sorter has an additional rule: `sorted()` and `.sort()` are forbidden. Its sorting algorithm must be implemented manually.
+Submission execution is process-isolated for timeout reliability, but neither the Python nor C runner is a security, filesystem, network, or memory sandbox. Only grade code you trust on your own machine.
 
-After each valid grading attempt, a detailed report is saved under `traces/`. Failed cases show the call, expected result, actual result, or runtime error.
+After each valid attempt, the full report is saved under `traces/`. Output is compared exactly, including spaces and final newlines.
 
 ## Project structure
 
 ```text
 exam1/
-├── examshell.py     Main application, subjects, and exercise cases
-├── exam_worker.py   Internal isolated submission runner
-├── Makefile         Short commands for running
-└── README.md        Usage guide
+├── examshell.py          Main application and Python exercise data
+├── exam_worker.py        Isolated Python submission runner
+├── worker_protocol.py    Bounded protocol for the Python runner
+├── exam02_catalog.py     Exam 02 registry and subject loader
+├── exam02_subjects.py    Embedded Exam 02 subject text
+├── c_grader.py           Native C compiler/test runner
+├── Makefile              Command shortcuts
+└── README.md             Usage guide
 ```
 
 ## Common problems
 
 ### File not found
 
-Check that both the directory and filename exactly match the assigned exercise:
+Check both the directory and filename. Exam 02 requires `.c`; Exams 03 and 04 require `.py`.
 
-```text
-rendu/<exercise>/<exercise>.py
-```
+### `cc` not found
+
+Install GCC or Clang and confirm `cc --version` works in the same terminal before starting Exam 02.
+
+### Compilation failed
+
+Fix every compiler error and warning. Warnings are errors under the Exam 02 grading flags.
 
 ### Function not found
 
-Open the subject and use the exact function signature it provides. Do not rename the required function or declare it with `async def`.
-
-### Internal runner not found
-
-Make sure `exam_worker.py` is in the same directory as `examshell.py`.
+Use the exact function name and prototype shown in the subject. Python functions must use normal `def` rather than `async def`.
 
 ### A solution times out
 
-Check for infinite loops or an algorithm that is too slow. Each complete grading run has a ten-second safety timeout.
+Check for infinite loops, runaway recursion, or an algorithm that is too slow. The trace identifies the timed-out case.

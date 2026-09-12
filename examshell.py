@@ -4,7 +4,8 @@ import os
 import sys
 import ast
 import copy
-import pickle
+import signal
+import secrets
 import time
 import shutil
 import random
@@ -12,6 +13,21 @@ import subprocess
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from exam02_catalog import (
+    C_EXERCISES,
+    C_SIGNATURES,
+    C_SUBJECTS,
+    EXAM02_CONFIG,
+)
+from c_grader import grade_c_exercise, validate_c_specs, validate_c_submission
+from worker_protocol import (
+    MAX_MESSAGE_BYTES as MAX_WORKER_RESPONSE_BYTES,
+    MAX_SOURCE_BYTES as MAX_PYTHON_SOURCE_BYTES,
+    ProtocolError,
+    decode_response,
+    encode_request,
+)
 
 # Configure UTF-8 encoding for standard I/O (essential for cross-platform Unicode support on Windows)
 try:
@@ -127,10 +143,13 @@ def input_until(prompt, deadline=None):
 # ══════════════════════════════════════════════════════════════
 
 EXAMS = {
+    "exam02": EXAM02_CONFIG,
     "exam03": {
         "id": "exam03",
         "name": "Exam 03",
         "title": "Exam 03 — Core Python Algorithms",
+        "language": "python",
+        "extension": ".py",
         "level_points": {1: 16, 2: 16, 3: 17, 4: 17, 5: 17, 6: 17},
         "levels": {
             1: [
@@ -165,6 +184,8 @@ EXAMS = {
         "id": "exam04",
         "name": "Exam 04",
         "title": "Exam 04 — Advanced Python Algorithms",
+        "language": "python",
+        "extension": ".py",
         "level_points": {1: 25, 2: 25, 3: 25, 4: 25},
         "levels": {
             1: [
@@ -238,6 +259,8 @@ SIGNATURES = {
     "py_sliding_window_maximum":
         "def sliding_window_maximum(nums: list[int], k: int) -> list[int]:\n    # Write your solution here\n    pass\n",
 }
+
+SIGNATURES.update(C_SIGNATURES)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -365,6 +388,7 @@ Allowed functions:
 Write a function that checks if a string is a palindrome,
 ignoring spaces and case, only consider alphabetic characters
 for the comparison.
+Use Python's definition of alphabetic characters (`str.isalpha()`).
 Note: an empty string is NOT considered a palindrome (returns False).
 If the input contains no alphabetic characters, return False.
 
@@ -420,6 +444,8 @@ Allowed functions:
 
 Given a 2D matrix (list of lists), return a new matrix where each row
 is reversed.
+Reverse every row independently; rows may have different lengths.
+Do not modify or return the input matrix object.
 
 Function signature:
 def mirror_matrix(matrix: list[list[int]]) -> list[list[int]]:
@@ -465,6 +491,7 @@ Write a function that checks if the string 'small' is a subsequence
 of 'big'. A subsequence means all characters of 'small' appear in 'big'
 in the same order, but not necessarily consecutively.
 Function is case-sensitive.
+Spaces and punctuation are regular characters in both strings.
 
 Function signature:
 def hidenp(small: str, big: str) -> bool:
@@ -519,6 +546,8 @@ Allowed functions:
 Write a function that returns a string with the characters that appear
 in both strings, without repetitions. Characters are added in the order
 they appear in the first string.
+Character comparisons are case-sensitive.
+Spaces and punctuation are regular characters.
 
 Function signature:
 def inter(s1: str, s2: str) -> str:
@@ -626,6 +655,7 @@ Allowed functions:
 Write a function that counts the number of valid consecutive digit pairs
 in a string. A valid pair consists of two adjacent digits where the second
 digit is exactly one greater than the first.
+A digit here means one of the ASCII characters 0 through 9.
 A 9 followed by a 0 is NOT a valid pair.
 
 Function signature:
@@ -681,6 +711,8 @@ Allowed functions:
 Write a function that checks if two strings are anagrams.
 They must contain exactly the same letters with the same quantity,
 ignoring case and spaces.
+Only literal space characters are ignored. Digits and punctuation count
+as regular characters and must also match.
 
 Function signature:
 def anagram(s1: str, s2: str) -> bool:
@@ -830,10 +862,13 @@ Allowed functions:
 
 Write a function that transforms a string by alternating the case of
 alphabetic characters only.
+Use Python's definition of alphabetic characters (`str.isalpha()`).
 Non-alphabetic characters remain unchanged and are NOT counted in the
 alternation index.
 The first alphabetic character should be lowercase, the second uppercase, etc.
-Spaces reset the alternation (next alpha after a space is lowercase again).
+The literal space character (`' '`) resets the alternation
+(the next alphabetic character is lowercase again).
+Other non-alphabetic characters do not reset the alternation.
 
 Function signature:
 def string_sculptor(text: str) -> str:
@@ -878,6 +913,7 @@ Allowed functions:
 Write a function that rotates a list to the right by k positions.
 Rotating right by k means the last k elements move to the front.
 A negative k rotates left (for example, k=-1 moves the first item to the end).
+For a non-empty list, shifts larger than the list wrap around its length.
 
 Function signature:
 def twist_sequence(arr: list[int], k: int) -> list[int]:
@@ -922,6 +958,8 @@ Allowed functions:
 Write a function that creates a Caesar cipher by shifting letters in a
 string by a given amount.
 Non-alphabetic characters should remain unchanged.
+Only the 26 English letters A-Z and a-z are shifted; all other characters
+remain unchanged.
 The shift can be negative (shift left).
 
 Function signature:
@@ -1099,6 +1137,7 @@ Write a function that finds the intersection of
 multiple sorted lists.
 Return a new list containing elements that appear in
 ALL input lists, in sorted order.
+Do not modify the input lists.
 
 Function signature:
 def list_intersection_finder(lists: list[list[int]]) -> list[int]:
@@ -1419,6 +1458,8 @@ Output:
 """,
 }
 
+SUBJECTS.update(C_SUBJECTS)
+
 
 # ══════════════════════════════════════════════════════════════
 # Test Cases
@@ -1436,6 +1477,8 @@ TEST_CASES = {
         ("Unclosed opening brackets",        ("((())",),                                 False),
         ("Empty string",                     ("",),                                      True),
         ("Single closing bracket",           (")",),                                     False),
+        ("Unmatched square closing bracket", ("]",),                                     False),
+        ("Trailing unmatched curly bracket", ("[]}",),                                  False),
         ("Deep nesting",                     ("{[()]}",),                                True),
         ("Mixed text and nested brackets",   ("a{b[c(d)e]f}g",),                         True),
     ],
@@ -1482,6 +1525,7 @@ TEST_CASES = {
         ("Complex sentence",                 ("Step on no pets",),                       True),
         ("Punctuation-only is not palindrome",("!? 123",),                              False),
         ("Ignore digits and punctuation",    ("A1, b2, a!",),                            True),
+        ("Non-ASCII alphabetic characters",  ("éa",),                                     False),
     ],
 
     "py_mirror_matrix": [
@@ -1492,6 +1536,7 @@ TEST_CASES = {
         ("Negative numbers",                 ([[-1, -2], [-3, -4]],),                    [[-2, -1], [-4, -3]]),
         ("Empty matrix",                     ([],),                                      []),
         ("Matrix with empty sublists",       ([[], []],),                                [[], []]),
+        ("Rows with different lengths",      ([[1, 2, 3], [4], [5, 6]],),               [[3, 2, 1], [4], [6, 5]]),
     ],
 
     # ── Exam 03 / Level 3 ─────────────────────────────────────
@@ -1506,6 +1551,8 @@ TEST_CASES = {
         ("Exact match",                      ("hello", "hello"),                         True),
         ("Prefix match",                     ("hello", "hello world"),                   True),
         ("Both empty strings",               ("", ""),                                   True),
+        ("Case-sensitive mismatch",          ("A", "a"),                                 False),
+        ("Punctuation must be present",      ("a-b", "ab"),                             False),
     ],
 
     "py_inter": [
@@ -1517,6 +1564,8 @@ TEST_CASES = {
         ("Empty second string",              ("abc", ""),                                ""),
         ("Reversed strings",                 ("abcdef", "fedcba"),                       "abcdef"),
         ("Numeric characters",               ("12345", "54321"),                         "12345"),
+        ("Letter case is distinct",          ("a", "A"),                                 ""),
+        ("Spaces and punctuation are chars", ("a !a?", "?! "),                         " !?"),
     ],
 
     "py_number_base_converter": [
@@ -1527,6 +1576,7 @@ TEST_CASES = {
         ("Base 36 to Decimal",               ("Z", 36, 10),                              "35"),
         ("Decimal to Base 36",               ("35", 10, 36),                             "Z"),
         ("Invalid from_base (< 2)",          ("123", 1, 10),                             "ERROR"),
+        ("Invalid from_base (> 36)",         ("10", 40, 10),                             "ERROR"),
         ("Invalid character for base",       ("G", 16, 10),                              "ERROR"),
         ("Zero value",                       ("0", 10, 2),                               "0"),
         ("Invalid to_base (> 36)",           ("10", 10, 40),                             "ERROR"),
@@ -1536,6 +1586,11 @@ TEST_CASES = {
         ("Invalid to_base (< 2)",            ("10", 10, 1),                              "ERROR"),
         ("Leading zeroes normalized",        ("000F", 16, 10),                           "15"),
         ("Signed input is invalid",          ("-10", 10, 2),                             "ERROR"),
+        ("Explicit plus is invalid",         ("+10", 10, 2),                             "ERROR"),
+        ("Leading whitespace is invalid",    (" 10", 10, 2),                             "ERROR"),
+        ("Trailing whitespace is invalid",   ("10 ", 10, 2),                             "ERROR"),
+        ("Underscores are invalid digits",    ("1_0", 2, 10),                            "ERROR"),
+        ("Base prefixes are invalid",         ("0x10", 16, 10),                          "ERROR"),
     ],
 
     "py_pattern_tracker": [
@@ -1547,6 +1602,8 @@ TEST_CASES = {
         ("Alternating letters and numbers",  ("1a2b3c4",),                               0),
         ("Duplicates not consecutive diff",  ("112233",),                                2),
         ("9 followed by 0 is invalid",       ("890",),                                   1),
+        ("Repeated valid pairs all count",   ("1212",),                                  2),
+        ("Non-ASCII numerals are separators",("١٢",),                                   0),
         ("Empty string",                     ("",),                                      0),
     ],
 
@@ -1561,6 +1618,10 @@ TEST_CASES = {
         ("Another phrase anagram",           ("The eyes", "They see"),                   True),
         ("School master anagram",            ("School master", "The classroom"),         True),
         ("Different lengths",                ("rat", "car"),                             False),
+        ("Same set, different quantities",   ("aab", "abb"),                            False),
+        ("Matching punctuation",             ("a-b", "b-a"),                            True),
+        ("Missing punctuation",              ("a-b", "ab"),                             False),
+        ("Non-space whitespace still counts",("ab\t", "ab"),                           False),
     ],
 
     "py_shadow_merge": [
@@ -1571,6 +1632,8 @@ TEST_CASES = {
         ("Preserving duplicates",            ([1, 1, 2], [1, 3, 3]),                     [1, 1, 1, 2, 3, 3]),
         ("Both empty",                       ([], []),                                   []),
         ("Negative numbers included",        ([-5, 0, 5], [-10, 0, 10]),                 [-10, -5, 0, 0, 5, 10]),
+        ("Second list exhausts first",        ([4, 5, 6], [1, 2, 3]),                     [1, 2, 3, 4, 5, 6]),
+        ("Empty second list",                 ([1, 2, 3], []),                            [1, 2, 3]),
     ],
 
     "py_string_permutation_checker": [
@@ -1583,6 +1646,10 @@ TEST_CASES = {
         ("Case sensitivity check",           ("Abc", "abc"),                             False),
         ("Sentence permutation",             ("a gentleman", "elegant man"),             True),
         ("Identical strings",                ("same", "same"),                           True),
+        ("Whitespace changes the string",    ("ab", "a b"),                              False),
+        ("Punctuation is preserved",         ("ab!", "!ba"),                            True),
+        ("Missing punctuation differs",      ("ab!", "ab"),                             False),
+        ("Same set, different quantities",   ("aab", "abb"),                            False),
     ],
 
     # ── Exam 03 / Level 5 ─────────────────────────────────────
@@ -1596,6 +1663,9 @@ TEST_CASES = {
         ("Two characters",                   ("ab",),                                    "aB"),
         ("Multiple spaces",                  ("a b c",),                                 "a b c"),
         ("Phrase with various cases",        ("One two THREE",),                         "oNe tWo tHrEe"),
+        ("Punctuation does not reset",       ("a-bc",),                                  "a-Bc"),
+        ("Tab does not reset",               ("a\tbc",),                                 "a\tBc"),
+        ("Non-ASCII alphabetic character",   ("éab",),                                  "éAb"),
     ],
 
     "py_twist_sequence": [
@@ -1607,6 +1677,7 @@ TEST_CASES = {
         ("Single element large k",           ([1], 10),                                  [1]),
         ("Rotate by exact length",           ([10, 20, 30], 3),                          [10, 20, 30]),
         ("Negative shift rotates left",      ([1, 2, 3, 4], -1),                         [2, 3, 4, 1]),
+        ("Large negative shift wraps",       ([1, 2, 3, 4], -6),                         [3, 4, 1, 2]),
     ],
 
     # ── Exam 03 / Level 6 ─────────────────────────────────────
@@ -1622,6 +1693,7 @@ TEST_CASES = {
         ("Single lowercase letter wrap",     ("z", 1),                                   "a"),
         ("Single uppercase letter wrap",     ("Z", 1),                                   "A"),
         ("Large negative shift",             ("Abc-Z", -53),                             "Zab-Y"),
+        ("Non-English letters unchanged",    ("café", 1),                              "dbgé"),
     ],
 
     # ── Exam 04 / Level 1 ─────────────────────────────────────
@@ -1640,6 +1712,8 @@ TEST_CASES = {
         ("Not a rotation (diff values)",     ([1, 2, 3], [4, 5, 6]),                    False),
         ("Repeated values valid rotation",   ([1, 2, 1, 2], [2, 1, 2, 1]),               True),
         ("Repeated values wrong order",      ([1, 1, 2, 2], [1, 2, 1, 2]),              False),
+        ("Repeated first value later match", ([1, 2, 1, 3], [1, 3, 1, 2]),              True),
+        ("Multi-digit boundaries stay distinct",([1, 23], [12, 3]),                      False),
     ],
 
     "py_constellation_mapper": [
@@ -1654,6 +1728,7 @@ TEST_CASES = {
         ("Single cell empty",                ([], 1),                                    ['.']),
         ("Full 2x2 grid",                    ([(0, 0), (0, 1), (1, 0), (1, 1)], 2),     ['**', '**']),
         ("Negative coord ignored",           ([(-1, 0), (0, 0)], 2),                     ['*.', '..']),
+        ("Negative column ignored",          ([(0, -1), (1, 1)], 2),                     ['..', '.*']),
         ("Zero grid size",                   ([(0, 0)], 0),                              []),
         ("Negative grid size",               ([(0, 0)], -2),                             []),
     ],
@@ -1671,6 +1746,8 @@ TEST_CASES = {
         ("All same elements",                ([[1, 1, 1], [1, 1]],),                     [1]),
         ("Two identical lists",              ([[1, 2, 3, 4, 5], [1, 2, 3, 4, 5]],),     [1, 2, 3, 4, 5]),
         ("Negative common values",           ([[-5, -3, 0], [-5, -2, 0], [-5, 0]],),    [-5, 0]),
+        ("Result order is explicitly sorted",([[1, 8, 20], [1, 8, 30]],),               [1, 8]),
+        ("Single list still deduplicates",   ([[1, 1, 2, 2]],),                         [1, 2]),
     ],
 
     "py_merge_sorted_lists": [
@@ -1700,6 +1777,7 @@ TEST_CASES = {
         ("Three-way circular",               ({"A": ["B"], "B": ["C"], "C": ["A"]},),    []),
         ("Cycle plus independent package",   ({"A": ["B"], "B": ["A"], "C": []},),          []),
         ("Duplicate dependencies",           ({"A": [], "B": ["A", "A"]},),                  ["A", "B"]),
+        ("Self dependency is a cycle",       ({"A": ["A"]},),                           []),
     ],
 
     "py_palindrome_partitioner": [
@@ -1716,6 +1794,8 @@ TEST_CASES = {
         ("'aabb' needs 1 cut",               ("aabb",),                                  1),
         ("'racecar' is a palindrome",        ("racecar",),                                0),
         ("Multiple possible partitions",     ("ababbbabbababa",),                        3),
+        ("Case-sensitive two-character input",("Aa",),                                   1),
+        ("Punctuation participates",         ("a!b",),                                  2),
     ],
 
     # ── Exam 04 / Level 4 ─────────────────────────────────────
@@ -1748,14 +1828,94 @@ FORBIDDEN_CALLS = {
 }
 
 
-def validate_submission_rules(exercise_name, file_path):
+def is_c_exercise(exercise_name):
+    """Return whether an exercise is graded as a native C submission."""
+    return exercise_name in C_EXERCISES
+
+
+def submission_extension(exercise_name):
+    """Return the required source extension for an exercise."""
+    return ".c" if is_c_exercise(exercise_name) else ".py"
+
+
+def submission_relative_path(exercise_name):
+    """Return the user-facing path for an exercise submission."""
+    extension = submission_extension(exercise_name)
+    return f"rendu/{exercise_name}/{exercise_name}{extension}"
+
+
+def exercise_entry_label(exercise):
+    """Return a language-aware Program/Function label for menus and status."""
+    if is_c_exercise(exercise["name"]):
+        if exercise.get("kind") == "program":
+            return "Program (main)"
+        return f"Function: {exercise['func']}()"
+    return f"Function: {exercise['func']}()"
+
+
+C_SUBJECT_SUPPORT_FILES = {
+    "ft_list_remove_if": {
+        "ft_list.h": (
+            "#ifndef FT_LIST_H\n"
+            "# define FT_LIST_H\n\n"
+            "typedef struct s_list\n"
+            "{\n"
+            "    struct s_list *next;\n"
+            "    void          *data;\n"
+            "} t_list;\n\n"
+            "#endif\n"
+        ),
+    },
+    "sort_list": {
+        "list.h": (
+            "#ifndef LIST_H\n"
+            "# define LIST_H\n\n"
+            "typedef struct s_list t_list;\n\n"
+            "struct s_list\n"
+            "{\n"
+            "    int     data;\n"
+            "    t_list *next;\n"
+            "};\n\n"
+            "#endif\n"
+        ),
+    },
+}
+
+
+def read_python_submission_source(file_path):
+    """Read one bounded UTF-8 Python source file (accepting a normal BOM)."""
+    try:
+        with file_path.open("rb") as source_file:
+            source_bytes = source_file.read(MAX_PYTHON_SOURCE_BYTES + 1)
+    except OSError as error:
+        return None, f"Could not read your submission:\n  {error}"
+
+    if len(source_bytes) > MAX_PYTHON_SOURCE_BYTES:
+        return None, (
+            "Submission file is too large:\n"
+            f"  Maximum size: {MAX_PYTHON_SOURCE_BYTES} bytes"
+        )
+    try:
+        # Python's own source loader accepts a UTF-8 BOM, so validation does too.
+        return source_bytes.decode("utf-8-sig"), None
+    except UnicodeDecodeError as error:
+        return None, (
+            "Could not read your submission as UTF-8:\n"
+            f"  Invalid byte near position {error.start}"
+        )
+
+
+def validate_submission_rules(exercise_name, file_path, source=None):
     """Return an error when a submission uses exercise-specific forbidden APIs."""
     rules = FORBIDDEN_CALLS.get(exercise_name)
     if not rules:
         return None
 
+    if source is None:
+        source, read_error = read_python_submission_source(file_path)
+        if read_error:
+            return read_error
     try:
-        source = file_path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(file_path))
     except SyntaxError as error:
         return (
@@ -1763,17 +1923,48 @@ def validate_submission_rules(exercise_name, file_path):
             f"  File \"{error.filename}\", line {error.lineno}\n"
             f"  {error.msg}"
         )
-    except OSError as error:
-        return f"Could not read your submission:\n  {error}"
-
     violations = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in rules["names"]:
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Load)
+            and node.id in rules["names"]
+        ):
             violations.add((node.lineno, f"{node.id}()"))
-        elif isinstance(node, ast.Attribute) and node.attr in rules["attributes"]:
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Load)
+            and node.attr in rules["attributes"]
+        ):
             violations.add((node.lineno, f".{node.attr}()"))
         elif isinstance(node, ast.alias) and node.name in rules["names"]:
             violations.add((node.lineno, f"{node.name}()"))
+        elif isinstance(node, ast.Call) and len(node.args) >= 2:
+            direct_getattr = (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+            )
+            builtins_getattr = (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.ctx, ast.Load)
+                and node.func.attr == "getattr"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "builtins"
+            )
+            attribute_node = node.args[1]
+            if (
+                (direct_getattr or builtins_getattr)
+                and isinstance(attribute_node, ast.Constant)
+                and isinstance(attribute_node.value, str)
+                and attribute_node.value in rules["attributes"]
+            ):
+                attribute = attribute_node.value
+                display = (
+                    f"{attribute}()"
+                    if attribute in rules["names"]
+                    else f".{attribute}()"
+                )
+                violations.add((node.lineno, display))
 
     if not violations:
         return None
@@ -1791,6 +1982,9 @@ def validate_submission_rules(exercise_name, file_path):
 
 def validate_submission_file(exercise_name, func_name):
     """Validate file presence, syntax, required function, and exercise rules."""
+    if is_c_exercise(exercise_name):
+        return validate_c_submission(exercise_name, RENDU_DIR)
+
     file_path = RENDU_DIR / exercise_name / f"{exercise_name}.py"
 
     if not file_path.exists():
@@ -1801,17 +1995,18 @@ def validate_submission_file(exercise_name, func_name):
             f"  rendu/{exercise_name}/{exercise_name}.py"
         )
 
-    rule_error = validate_submission_rules(exercise_name, file_path)
+    source, read_error = read_python_submission_source(file_path)
+    if read_error:
+        return read_error
+
+    rule_error = validate_submission_rules(exercise_name, file_path, source=source)
     if rule_error:
         return rule_error
 
     try:
-        source = file_path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(file_path))
     except SyntaxError as error:
         return f"Syntax Error in your code:\n  File \"{error.filename}\", line {error.lineno}\n  {error.msg}"
-    except OSError as error:
-        return f"Could not read your submission:\n  {error}"
 
     definitions = [
         node for node in tree.body
@@ -1830,52 +2025,272 @@ def validate_submission_file(exercise_name, func_name):
     return None
 
 
+def _create_worker_response_path():
+    """Create an ordinary, unique response file inside the workspace."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOINHERIT", 0)
+    for _ in range(20):
+        candidate = BASE_DIR / (
+            f".exam_worker_response_{os.getpid()}_{secrets.token_hex(12)}.json"
+        )
+        try:
+            descriptor = os.open(candidate, flags, 0o600)
+        except FileExistsError:
+            continue
+        os.close(descriptor)
+        return candidate
+    raise OSError("could not allocate an isolated worker response file")
+
+
+def _read_worker_response(response_path):
+    """Read at most one bounded response from the worker's private channel."""
+    try:
+        with response_path.open("rb") as response_file:
+            payload = response_file.read(MAX_WORKER_RESPONSE_BYTES + 1)
+    except OSError as error:
+        return None, f"Could not read isolated test runner response: {error}"
+    if len(payload) > MAX_WORKER_RESPONSE_BYTES:
+        return None, "Isolated test runner response exceeds the size limit"
+    if not payload:
+        return None, "Isolated test runner produced an empty response"
+    return payload, None
+
+
+def _create_windows_worker_job(process):
+    """Put a blocked-at-stdin worker in a kill-on-close Windows Job Object."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _BasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class _ExtendedLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimitInformation),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    )
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    job_handle = kernel32.CreateJobObjectW(None, None)
+    if not job_handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        information = _ExtendedLimitInformation()
+        information.BasicLimitInformation.LimitFlags = 0x00002000
+        if not kernel32.SetInformationJobObject(
+            job_handle,
+            9,  # JobObjectExtendedLimitInformation
+            ctypes.byref(information),
+            ctypes.sizeof(information),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not kernel32.AssignProcessToJobObject(job_handle, int(process._handle)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return job_handle
+    except BaseException:
+        kernel32.CloseHandle(job_handle)
+        raise
+
+
+def _close_windows_worker_job(job_handle):
+    """Closing a kill-on-close Job Object terminates all remaining members."""
+    if job_handle is None:
+        return
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    kernel32.CloseHandle.restype = ctypes.c_int
+    kernel32.CloseHandle(job_handle)
+
+
+def _terminate_worker_tree(process):
+    """Best-effort termination of the worker and descendants in its group."""
+    if os.name == "nt":
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                creationflags=creation_flags,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    if process.stdin is not None:
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
+
+
 def run_submission_batch(exercise_name, func_name, test_arguments, timeout=FUNCTION_TIMEOUT_SECONDS):
     """Run a complete test batch in one safely terminable child process."""
     file_path = RENDU_DIR / exercise_name / f"{exercise_name}.py"
     if not WORKER_PATH.is_file():
         return None, f"Internal runner not found: {WORKER_PATH.name}"
 
-    command = [sys.executable, "-I", str(WORKER_PATH), str(file_path), func_name]
-    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    _, source_error = read_python_submission_source(file_path)
+    if source_error:
+        return None, source_error
     try:
-        completed = subprocess.run(
-            command,
-            input=pickle.dumps(test_arguments, protocol=pickle.HIGHEST_PROTOCOL),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=str(BASE_DIR),
-            timeout=timeout,
-            creationflags=creation_flags,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return None, (
-            f"TIMEOUT — submission took longer than {timeout}s "
-            "(including module initialization)"
-        )
-    except OSError as error:
-        return None, f"Could not start isolated test runner: {error}"
+        request = encode_request(test_arguments)
+        response_path = _create_worker_response_path()
+    except (OSError, ProtocolError) as error:
+        return None, f"Could not prepare isolated test runner: {error}"
 
-    if completed.returncode != 0:
-        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
-        detail = f": {stderr}" if stderr else ""
-        return None, f"Isolated test runner exited with code {completed.returncode}{detail}"
+    command = [
+        sys.executable,
+        "-I",
+        str(WORKER_PATH),
+        str(file_path),
+        func_name,
+        str(response_path),
+    ]
+    creation_flags = 0
+    popen_options = {}
+    if os.name == "nt":
+        creation_flags = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    else:
+        popen_options["start_new_session"] = True
 
+    process = None
+    windows_job = None
     try:
-        response = pickle.loads(completed.stdout)
-    except Exception:
-        return None, "Submission produced an invalid response in the isolated test runner"
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=str(BASE_DIR),
+                creationflags=creation_flags,
+                **popen_options,
+            )
+            if os.name == "nt":
+                # The worker is still blocked waiting for its request here, so
+                # it cannot spawn a descendant before assignment to the job.
+                windows_job = _create_windows_worker_job(process)
+            process.communicate(input=request, timeout=timeout)
+            if windows_job is not None:
+                _close_windows_worker_job(windows_job)
+                windows_job = None
+            elif os.name != "nt":
+                # The main worker has exited. Remove any background descendants
+                # left in its dedicated session before trusting the response.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+        except subprocess.TimeoutExpired:
+            if windows_job is not None:
+                _close_windows_worker_job(windows_job)
+                windows_job = None
+            if process is not None:
+                _terminate_worker_tree(process)
+            return None, (
+                f"TIMEOUT — submission took longer than {timeout}s "
+                "(including module initialization)"
+            )
+        except OSError as error:
+            if windows_job is not None:
+                _close_windows_worker_job(windows_job)
+                windows_job = None
+            if process is not None:
+                _terminate_worker_tree(process)
+            return None, f"Could not start isolated test runner: {error}"
 
-    if not isinstance(response, dict) or "ok" not in response:
-        return None, "Submission produced an invalid result envelope"
-    if not response["ok"]:
-        return None, response.get("error", "Unknown submission error")
-    results = response.get("results")
-    if not isinstance(results, list) or len(results) != len(test_arguments):
-        return None, "Submission produced an incomplete test result batch"
-    return results, None
+        if process.returncode != 0:
+            return None, f"Isolated test runner exited with code {process.returncode}"
 
+        payload, response_error = _read_worker_response(response_path)
+        if response_error:
+            return None, response_error
+        try:
+            response = decode_response(payload, len(test_arguments))
+        except ProtocolError as error:
+            return None, f"Submission produced an invalid isolated response: {error}"
+        if not response["ok"]:
+            return None, response["error"]
+        return response["results"], None
+    finally:
+        if windows_job is not None:
+            _close_windows_worker_job(windows_job)
+            if process is not None and process.poll() is None:
+                try:
+                    process.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+        if process is not None and os.name != "nt":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        if process is not None and process.poll() is None:
+            _terminate_worker_tree(process)
+        try:
+            response_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 def run_submission_isolated(exercise_name, func_name, args, timeout=FUNCTION_TIMEOUT_SECONDS):
     """Run one test through the batch worker (convenience wrapper for diagnostics)."""
@@ -1941,7 +2356,16 @@ def validate_configuration():
     if not WORKER_PATH.is_file():
         errors.append(f"missing isolated runner: {WORKER_PATH.name}")
 
+    c_errors = validate_c_specs()
+    errors.extend(f"exam02: {error}" for error in c_errors)
+
     for exam_id, exam in EXAMS.items():
+        language = exam.get("language")
+        if language not in {"c", "python"}:
+            errors.append(f"{exam_id}: unsupported or missing language")
+        expected_extension = ".c" if language == "c" else ".py"
+        if exam.get("extension") != expected_extension:
+            errors.append(f"{exam_id}: extension does not match language")
         levels = exam.get("levels", {})
         points = exam.get("level_points", {})
         if not levels:
@@ -1966,6 +2390,20 @@ def validate_configuration():
                 registered.add(name)
                 if name not in SUBJECTS:
                     errors.append(f"{name}: missing subject")
+                elif not SUBJECTS[name].strip() or "Subject unavailable" in SUBJECTS[name]:
+                    errors.append(f"{name}: subject text is unavailable")
+                if language == "c":
+                    metadata = C_EXERCISES.get(name)
+                    if metadata is None:
+                        errors.append(f"{name}: missing C exercise specification")
+                    else:
+                        if func_name != metadata["entry"]:
+                            errors.append(f"{name}: incorrect C entry point")
+                        if exercise.get("kind") != metadata["kind"]:
+                            errors.append(f"{name}: incorrect C exercise kind")
+                    if name not in SIGNATURES:
+                        errors.append(f"{name}: missing C signature")
+                    continue
                 if name not in SIGNATURES or f"def {func_name}(" not in SIGNATURES[name]:
                     errors.append(f"{name}: missing or incorrect signature")
                 tests = TEST_CASES.get(name)
@@ -1985,6 +2423,22 @@ def validate_configuration():
     return errors
 
 
+def _python_result_contract_error(exercise_name, original_arguments,
+                                  arguments_after, same_as_first_argument):
+    """Return an error for exercise-specific mutation/identity contracts."""
+    if exercise_name == "py_mirror_matrix":
+        if not results_match(arguments_after, original_arguments):
+            return "Input matrix was modified; return a new matrix without changing the input."
+        if same_as_first_argument:
+            return "Function returned the input matrix; return a new matrix object."
+    elif exercise_name == "py_list_intersection_finder":
+        if not results_match(arguments_after, original_arguments):
+            return "Input lists were modified; return a new result list without changing them."
+        if same_as_first_argument:
+            return "Function returned the outer input list; return a new result list."
+    return None
+
+
 def grade_exercise(exercise_name, func_name, func=None):
     """
     Grade user's submission against all test cases.
@@ -1992,6 +2446,15 @@ def grade_exercise(exercise_name, func_name, func=None):
     Returns:
         (passed_count, total_count, detail_string)
     """
+    if is_c_exercise(exercise_name):
+        if func is not None:
+            return 0, 0, "In-memory grading is only available for Python exercises."
+        return grade_c_exercise(
+            exercise_name,
+            RENDU_DIR,
+            timeout=FUNCTION_TIMEOUT_SECONDS,
+        )
+
     if func is None:
         error = validate_submission_file(exercise_name, func_name)
         if error:
@@ -2017,6 +2480,8 @@ def grade_exercise(exercise_name, func_name, func=None):
 
     for i, (desc, args, expected) in enumerate(tests, 1):
         args_copy = copy.deepcopy(args)
+        arguments_after = args_copy
+        same_as_first_argument = False
         if func is None:
             if isolated_error:
                 result, error = None, isolated_error
@@ -2024,8 +2489,19 @@ def grade_exercise(exercise_name, func_name, func=None):
                 response = isolated_results[i - 1]
                 result = response.get("result")
                 error = None if response.get("ok") else response.get("error", "Unknown submission error")
+                arguments_after = response["arguments_after"]
+                same_as_first_argument = response["same_as_first_argument"]
         else:
             result, error = run_with_timeout(func, args_copy)
+            if not error:
+                same_as_first_argument = bool(args_copy) and result is args_copy[0]
+        if not error:
+            error = _python_result_contract_error(
+                exercise_name,
+                args,
+                arguments_after,
+                same_as_first_argument,
+            )
         num_label = f"{i:02d}/{total:02d}"
 
         if error:
@@ -2083,6 +2559,8 @@ def prepare_exercise_environment(exercise_name):
 
     subject_text = get_plain_subject(exercise_name)
     (ex_subj_dir / f"{exercise_name}.txt").write_text(subject_text, encoding="utf-8")
+    for filename, contents in C_SUBJECT_SUPPORT_FILES.get(exercise_name, {}).items():
+        (ex_subj_dir / filename).write_text(contents, encoding="utf-8")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -2100,6 +2578,8 @@ class ExamShell:
         self.exam_title = exam_config["title"]
         self.levels = exam_config["levels"]
         self.level_points = exam_config["level_points"]
+        self.language = exam_config["language"]
+        self.extension = exam_config["extension"]
 
         self.practice_mode = practice_mode
         self.start_time = None
@@ -2134,7 +2614,7 @@ class ExamShell:
         return f"{h:02d}h {m:02d}m {s:02d}s"
 
     def is_expired(self):
-        if self.practice_mode:
+        if self.practice_mode or self.end_time is None:
             return False
         return datetime.now() >= self.end_time
 
@@ -2169,15 +2649,15 @@ class ExamShell:
         self.print_banner()
 
         ex_name = self.current_exercise["name"]
-        func_name = self.current_exercise["func"]
-        rendu_path = f"rendu/{ex_name}/{ex_name}.py"
+        entry_label = exercise_entry_label(self.current_exercise)
+        rendu_path = submission_relative_path(ex_name)
         subject_path = f"subject/{ex_name}/{ex_name}.txt"
 
         print()
         print(f"  {C.B}{C.M}══════════ NEW ASSIGNMENT: Level {self.current_level} ══════════{C.RST}")
         print()
         print(f"  Exercise:   {C.B}{C.W}{ex_name}{C.RST}")
-        print(f"  Function:   {C.CY}{func_name}(){C.RST}")
+        print(f"  Entry:      {C.CY}{entry_label}{C.RST}")
         print(f"  Subject:    {C.Y}{subject_path}{C.RST}")
         print(f"  Submit at:  {C.G}{rendu_path}{C.RST} {C.DIM}(create folder & file manually){C.RST}")
         if self.practice_mode:
@@ -2209,8 +2689,8 @@ class ExamShell:
         if self.current_exercise:
             ex_name = self.current_exercise["name"]
             print(f"  Current Exercise : {C.B}{ex_name}{C.RST}")
-            print(f"  Function Name    : {C.CY}{self.current_exercise['func']}(){C.RST}")
-            print(f"  Solution Path    : {C.G}rendu/{ex_name}/{ex_name}.py{C.RST} {C.DIM}(create manually){C.RST}")
+            print(f"  Required Entry   : {C.CY}{exercise_entry_label(self.current_exercise)}{C.RST}")
+            print(f"  Solution Path    : {C.G}{submission_relative_path(ex_name)}{C.RST} {C.DIM}(create manually){C.RST}")
             print(f"  Subject Path     : {C.Y}subject/{ex_name}/{ex_name}.txt{C.RST}")
             print(f"  Attempts so far  : {self.attempts}")
         if self.exercises_passed:
@@ -2228,8 +2708,9 @@ class ExamShell:
             print(f"\n  Time remaining: {C.B}{self.format_time(rem)}{C.RST}\n")
 
     def cmd_help(self):
+        entry = exercise_entry_label(self.current_exercise) if self.current_exercise else "current exercise"
         print(f"\n  {C.B}Available Commands:{C.RST}")
-        print(f"    {C.G}grademe{C.RST}     - Submit and test your solution for {C.CY}{self.current_exercise['func'] if self.current_exercise else ''}(){C.RST}")
+        print(f"    {C.G}grademe{C.RST}     - Submit and test {C.CY}{entry}{C.RST}")
         print(f"    {C.G}subject{C.RST}     - Display the subject in terminal")
         print(f"    {C.G}trace{C.RST} [n]   - Display the latest test trace (or attempt n) in terminal")
         print(f"    {C.G}status{C.RST}      - Show your exam status and score")
@@ -2259,12 +2740,32 @@ class ExamShell:
         target_file = None
         if arg:
             arg_str = str(arg).strip()
-            if arg_str.isdigit() and self.current_exercise:
-                target_file = TRACES_DIR / f"{self.current_exercise['name']}_trace_{arg_str}.txt"
+            if arg_str.isdigit():
+                if not self.current_exercise:
+                    print(f"\n  {C.DIM}No exercise currently assigned.{C.RST}\n")
+                    return
+                attempt_number = int(arg_str)
+                target_file = TRACES_DIR / (
+                    f"{self.current_exercise['name']}_trace_{attempt_number}.txt"
+                )
+                if not target_file.is_file():
+                    print(
+                        f"\n  {C.DIM}No trace found for attempt #{attempt_number} "
+                        f"of {self.current_exercise['name']}.{C.RST}\n"
+                    )
+                    return
             elif Path(arg_str).name == arg_str:
                 candidate = TRACES_DIR / arg_str
                 if candidate.is_file():
                     target_file = candidate
+                else:
+                    print(
+                        f"\n  {C.DIM}No trace file named {arg_str!r} exists.{C.RST}\n"
+                    )
+                    return
+            else:
+                print(f"\n  {C.DIM}Invalid trace reference: {arg_str!r}.{C.RST}\n")
+                return
 
         if not target_file or not target_file.exists():
             if self.current_exercise and self.attempts > 0:
@@ -2279,9 +2780,15 @@ class ExamShell:
             print(f"\n  {C.DIM}No trace available yet. Run 'grademe' first.{C.RST}\n")
             return
 
+        try:
+            trace_text = target_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            print(f"\n  {C.R}Could not read trace {target_file.name}: {error}{C.RST}\n")
+            return
+
         print()
         print(f"  {C.DIM}Displaying {target_file.name}:{C.RST}")
-        print(target_file.read_text(encoding="utf-8"))
+        print(trace_text)
         print()
 
     def cmd_grademe(self):
@@ -2289,8 +2796,14 @@ class ExamShell:
             print(f"  {C.R}No exercise assigned.{C.RST}")
             return
 
+        if self.is_expired():
+            print(f"\n  {C.BG_R}{C.W}{C.B}  TIME IS UP! Exam duration expired.  {C.RST}\n")
+            self.finish_exam(success=False)
+            return
+
         ex_name = self.current_exercise["name"]
         func_name = self.current_exercise["func"]
+        solution_path = submission_relative_path(ex_name)
 
         # Validate source without importing untrusted user code into the exam shell.
         error = validate_submission_file(ex_name, func_name)
@@ -2298,26 +2811,37 @@ class ExamShell:
             print(f"\n  {C.R}Error:{C.RST}")
             for line in error.splitlines():
                 print(f"    {line}")
-            print(f"\n  {C.Y}Create/edit your code in {C.G}rendu/{ex_name}/{ex_name}.py{C.Y} and try again.{C.RST}\n")
+            print(f"\n  {C.Y}Create/edit your code in {C.G}{solution_path}{C.Y} and try again.{C.RST}\n")
             return
 
-        # Increment attempt counter only for valid code evaluations that run tests
-        self.attempts += 1
-        self.attempts_by_exercise[ex_name] = self.attempts
+        # Show the prospective number while grading, then commit it only when
+        # the grader actually produced test results.  Compilation/audit errors
+        # return total == 0 and are not counted as test attempts.
+        next_attempt = self.attempts + 1
 
         print()
-        print(f"  {C.CY}Grading {ex_name} (attempt #{self.attempts})...{C.RST}")
+        print(f"  {C.CY}Grading {ex_name} (attempt #{next_attempt})...{C.RST}")
         print(f"  {C.DIM}Running isolated test batch ({FUNCTION_TIMEOUT_SECONDS}s safety timeout)...{C.RST}")
         print()
 
         passed, total, details = grade_exercise(ex_name, func_name)
 
+        # Grading itself can take several seconds.  A real-exam submission
+        # must not award points or complete the exam after the deadline.
+        if self.is_expired():
+            print(f"\n  {C.BG_R}{C.W}{C.B}  TIME IS UP! Exam duration expired.  {C.RST}\n")
+            self.finish_exam(success=False)
+            return
+
         if total == 0:
             print(f"  {C.R}Error:{C.RST}")
             for line in details.splitlines():
                 print(f"    {line}")
-            print(f"\n  {C.Y}Create/edit your code in {C.G}rendu/{ex_name}/{ex_name}.py{C.Y} and try again.{C.RST}\n")
+            print(f"\n  {C.Y}Create/edit your code in {C.G}{solution_path}{C.Y} and try again.{C.RST}\n")
             return
+
+        self.attempts = next_attempt
+        self.attempts_by_exercise[ex_name] = self.attempts
 
         # Write numbered trace file for this grademe attempt
         TRACES_DIR.mkdir(parents=True, exist_ok=True)
@@ -2388,7 +2912,7 @@ class ExamShell:
             print(f"  {C.R}Some tests failed. You can check the traces for details:{C.RST}")
             print(f"    {C.CY}traces/{trace_filename}{C.RST}  (or type {C.B}'trace'{C.RST} here)")
             print()
-            print(f"  {C.DIM}Edit your code in {C.G}rendu/{ex_name}/{ex_name}.py{C.DIM} and type 'grademe' to re-test.{C.RST}\n")
+            print(f"  {C.DIM}Edit your code in {C.G}{solution_path}{C.DIM} and type 'grademe' to re-test.{C.RST}\n")
 
     def finish_exam(self, success=False):
         self.finished = True
@@ -2442,13 +2966,14 @@ class ExamShell:
 
         print(f"{C.B}{C.CY}╔══════════════════════════════════════════════════════════════╗{C.RST}")
         print(f"{C.B}{C.CY}║                     EXAM SHELL v2.0                         ║{C.RST}")
-        print(f"{C.B}{C.CY}║              42-Style Python Exam Simulator                 ║{C.RST}")
+        print(f"{C.B}{C.CY}║            42-Style Programming Exam Simulator              ║{C.RST}")
         print(f"{C.B}{C.CY}╚══════════════════════════════════════════════════════════════╝{C.RST}\n")
         print(f"  {C.B}Exam:{C.RST}       {self.exam_title}")
         print(f"  {C.B}Mode:{C.RST}       {mode_str}")
         print(f"  {C.B}Levels:{C.RST}     {self.max_level} Levels ({sum(len(v) for v in self.levels.values())} total exercises pool)")
         print(f"  {C.B}Subjects:{C.RST}   Saved in {C.Y}subject/<exercise>/<exercise>.txt{C.RST}")
-        print(f"  {C.B}Workspace:{C.RST}  Create {C.G}rendu/<exercise>/<exercise>.py{C.RST} manually")
+        print(f"  {C.B}Language:{C.RST}   {self.language.upper()}")
+        print(f"  {C.B}Workspace:{C.RST}  Create {C.G}rendu/<exercise>/<exercise>{self.extension}{C.RST} manually")
         print(f"  {C.B}Submit:{C.RST}     Type {C.B}'grademe'{C.RST} to test your code")
         print()
         print(f"  {C.B}Rules:{C.RST}")
@@ -2676,8 +3201,8 @@ def select_practice_exercise_menu(exam_config, allow_mode_back=False):
             print_menu_option(
                 str(index),
                 exercise["name"],
-                f"Required function: {C.CY}{exercise['func']}(){C.RST}",
-                f"Submit: rendu/{exercise['name']}/{exercise['name']}.py",
+                f"Required entry: {C.CY}{exercise_entry_label(exercise)}{C.RST}",
+                f"Submit: {submission_relative_path(exercise['name'])}",
             )
         print_menu_navigation("Back to levels", "Finish practice")
 
@@ -2704,7 +3229,7 @@ def select_practice_exercise_menu(exam_config, allow_mode_back=False):
 def select_exam_menu():
     """Display interactive exam selection menu."""
     clear()
-    print_setup_header(1, "WELCOME TO EXAM SHELL", "42-Style Python Exam Simulator")
+    print_setup_header(1, "WELCOME TO EXAM SHELL", "42-Style Programming Exam Simulator")
     print(f"  First, choose the exam you want to work on.\n")
 
     exam_ids = list(EXAMS)
@@ -2728,18 +3253,21 @@ def select_exam_menu():
             print("\nExiting.")
             sys.exit(0)
 
-        aliases = {
-            "1": "exam03", "3": "exam03", "03": "exam03",
-            "exam 03": "exam03", "exam 3": "exam03", "exam03": "exam03",
-            "2": "exam04", "4": "exam04", "04": "exam04",
-            "exam 04": "exam04", "exam 4": "exam04", "exam04": "exam04",
-        }
+        aliases = {str(index): exam_id for index, exam_id in enumerate(exam_ids, start=1)}
+        for exam_id in exam_ids:
+            rank = exam_id.removeprefix("exam")
+            short_rank = str(int(rank))
+            aliases[exam_id] = exam_id
+            aliases[f"exam {rank}"] = exam_id
+            aliases[f"exam{short_rank}"] = exam_id
+            aliases[f"exam {short_rank}"] = exam_id
+            aliases[rank] = exam_id
         if choice in aliases:
             return aliases[choice]
         if choice in ("q", "quit", "exit"):
             print("\nExiting.")
             sys.exit(0)
-        print(f"  {C.R}Please enter 1 for Exam 03, 2 for Exam 04, or Q to quit.{C.RST}")
+        print(f"  {C.R}Please enter a number from 1 to {len(exam_ids)}, or Q to quit.{C.RST}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -2759,10 +3287,13 @@ def main():
         try:
             idx = sys.argv.index("--exam")
             val = sys.argv[idx + 1].strip().lower()
-            if val in ("3", "03", "exam03", "exam 03"):
-                exam_id = "exam03"
-            elif val in ("4", "04", "exam04", "exam 04"):
-                exam_id = "exam04"
+            compact = val.replace(" ", "")
+            if compact.startswith("exam"):
+                compact = compact[4:]
+            if compact.isdigit():
+                candidate = f"exam{int(compact):02d}"
+                if candidate in EXAMS:
+                    exam_id = candidate
         except (IndexError, ValueError):
             pass
 

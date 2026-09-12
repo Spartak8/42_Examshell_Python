@@ -2,8 +2,11 @@
 rendu/
 subject/
 traces/
+.c_exam_build/
+.exam_worker_response_*.json
 __pycache__/
 *.pyc
+tests/_runtime_workspace/
 
 # Local regression tests (not included in the public repository)
 tests/
