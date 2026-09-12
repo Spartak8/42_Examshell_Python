@@ -16,7 +16,7 @@ Keep `examshell.py` and `exam_worker.py` together in the same directory. `exam_w
 Open a terminal in the project directory and run:
 
 ```bash
-python examshell.py
+python3 examshell.py
 ```
 
 If your system provides `make` and `python3`, you can start it with:
