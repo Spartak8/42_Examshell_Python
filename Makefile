@@ -10,19 +10,19 @@ help:
 	@echo   make exam04    Open Exam 04 and choose a mode
 
 run:
-	python examshell.py
+	python3 examshell.py
 
 practice:
-	python examshell.py --practice
+	python3 examshell.py --practice
 
 real:
-	python examshell.py --real
+	python3 examshell.py --real
 
 exam02:
-	python examshell.py --exam 2
+	python3 examshell.py --exam 2
 
 exam03:
-	python examshell.py --exam 3
+	python3 examshell.py --exam 3
 
 exam04:
-	python examshell.py --exam 4
+	python3 examshell.py --exam 4
