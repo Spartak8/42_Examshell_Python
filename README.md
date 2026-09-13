@@ -16,7 +16,7 @@ Keep `examshell.py`, `exam_worker.py`, `worker_protocol.py`, `exam02_catalog.py`
 ## Starting Exam Shell
 
 ```bash
-python3 examshell.py
+make run
 ```
 
 The interactive setup asks for an exam, then Real Exam or Practice mode. Practice mode also lets you choose a level and exercise immediately.
@@ -24,7 +24,7 @@ The interactive setup asks for an exam, then Real Exam or Practice mode. Practic
 Command-line examples:
 
 ```bash
-python3 examshell.py --practice
+python3 examshell.py 
 python3 examshell.py --real
 python3 examshell.py --exam 2
 python3 examshell.py --exam 3 --practice
